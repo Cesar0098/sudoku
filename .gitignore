@@ -1,0 +1,23 @@
+*.iml
+.gradle
+.kotlin
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+.env
+debug.keystore
+
+# Nunca subir un keystore de firma real (release). build.gradle.kts espera
+# uno en la raíz por defecto (my-upload-key.jks) o vía $KEYSTORE_PATH.
+*.jks
+*.keystore

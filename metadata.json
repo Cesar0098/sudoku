@@ -1,0 +1,6 @@
+{
+  "name": "Sudoku",
+  "description": "Juego de Sudoku clásico offline, moderno y minimalista con generador inteligente, notas y estadísticas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
