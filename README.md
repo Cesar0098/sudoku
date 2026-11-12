@@ -51,10 +51,10 @@ publicidad, sin analíticas ni conexión a internet de ningún tipo.
 3. Dejá que Android Studio sincronice Gradle.
 4. Ejecutalo en un emulador o dispositivo físico.
 
-La app es 100% local: no necesitás configurar ninguna clave ni servicio
-externo para compilarla o correrla. (`.env.example` y el plugin de
-"secrets" en `app/build.gradle.kts` son restos de la plantilla de
-scaffolding original — la app no llama a ninguna API y no los usa.)
+La app es 100% local: no necesitás claves ni servicios externos. El wrapper de
+Gradle está incluido y debug utiliza la firma estándar de Android.
+
+En Windows: `gradlew.bat testDebugUnitTest` y `gradlew.bat assembleDebug`.
 
 ### Firma de builds "release"
 
@@ -80,3 +80,20 @@ El código de este proyecto se distribuye bajo la licencia que figura en
 El título de la pantalla de inicio usa la fuente [New Amsterdam](https://fonts.google.com/specimen/New+Amsterdam)
 (Google Fonts), licenciada bajo la SIL Open Font License 1.1 — ver
 [licenses/OFL-NewAmsterdam.txt](licenses/OFL-NewAmsterdam.txt).
+
+## Mejoras de partidas y accesibilidad
+
+- Dificultad verificada antes de entregar cada tablero; generación cancelable y error recuperable.
+- Desafío diario de nivel Medio, reproducible por fecha local y versión del motor, sin conexión.
+- Deshacer y rehacer persistentes, incluyendo cambios de notas; el contador de errores y pistas no se revierte.
+- Pista explicada para candidatos únicos o valores incorrectos, con revelación opcional. Pedir la explicación cuenta como ayuda.
+- Entrada por celda o por número, seleccionable durante el juego.
+- Atrás pausa la partida; contenido desplazable y tablero con ancho máximo para otras pantallas.
+- Celdas con descripciones de fila, columna, notas, selección y error para lectores de pantalla.
+- Modo sin comprobación: ni bloqueo de aciertos ni conteo del teclado revelan la solución.
+- Finalización transaccional identificada por partida; repetir una finalización no suma otra victoria.
+- Base de datos v4: migración que conserva partidas e incorpora historial de movimientos.
+
+El desafío diario inicia una partida y reemplaza la anterior, igual que Nueva partida.
+Las explicaciones de pistas todavía no describen pares o X-Wing; si no hay un candidato
+único inmediato, se ofrece revelar una celda sin atribuirle una deducción inexistente.

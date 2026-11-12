@@ -13,9 +13,28 @@ import kotlin.random.Random
 class SudokuFullFlowTest {
 
     @Test
+    fun generatedDifficultyMatchesAcrossSeeds() {
+        for (difficulty in Difficulty.entries) {
+            for (seed in 0 until 16) {
+                val generated = SudokuGenerator.generate(difficulty, Random(seed))
+                assertEquals(difficulty, com.example.engine.SudokuSolver.evaluateDifficulty(generated.puzzle))
+                assertEquals(1, com.example.engine.SudokuSolver.countSolutions(generated.puzzle))
+            }
+        }
+    }
+
+    @Test
+    fun sameDailySeedProducesSamePuzzle() {
+        assertEquals(SudokuGenerator.generate(Difficulty.MEDIUM, Random(2026316)),
+            SudokuGenerator.generate(Difficulty.MEDIUM, Random(2026316)))
+    }
+
+    @Test
     fun testGeneratedPuzzleHasUniqueSolution() {
         for (diff in Difficulty.entries) {
             val seed = SudokuGenerator.getSeedPuzzle(diff, Random(123))
+            assertEquals(1, com.example.engine.SudokuSolver.countSolutions(seed.puzzle))
+            assertEquals(diff, com.example.engine.SudokuSolver.evaluateDifficulty(seed.puzzle))
             assertNotNull(seed.puzzle)
             assertNotNull(seed.solution)
             assertEquals(81, seed.puzzle.size)

@@ -1,5 +1,6 @@
 package com.example.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -17,5 +18,8 @@ data class ActiveGameEntity(
     val hintsUsed: Int,
     val isPaused: Boolean,
     val isCompleted: Boolean,
+    @ColumnInfo(defaultValue = "'legacy'") val sessionId: String = "legacy",
+    @ColumnInfo(defaultValue = "''") val undoData: String = "",
+    @ColumnInfo(defaultValue = "''") val redoData: String = "",
     val timestamp: Long = System.currentTimeMillis()
 )

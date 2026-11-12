@@ -34,6 +34,7 @@ fun NumberKeypad(
     board: SudokuBoard,
     onNumberClick: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    assisted: Boolean = true,
     selectedNumber: Int = 0
 ) {
     val colors = MaterialTheme.sudokuColors
@@ -45,8 +46,8 @@ fun NumberKeypad(
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         for (num in 1..9) {
-            val isCompleted = board.isNumberCompleted(num)
-            val currentCount = board.countCorrectInstances(num)
+            val isCompleted = assisted && board.isNumberCompleted(num)
+            val currentCount = if (assisted) board.countCorrectInstances(num) else board.countInstances(num)
             val remaining = (9 - currentCount).coerceAtLeast(0)
             val isSelectedNumber = num == selectedNumber && selectedNumber != 0
 

@@ -1,11 +1,8 @@
 package com.example.engine
 
 import com.example.model.Difficulty
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.cancelChildren
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.random.Random
 
@@ -30,7 +27,6 @@ object SudokuGenerator {
         }
     }
 
-    private const val MAX_GRID_ATTEMPTS = 8
 
     fun generateCompleteGrid(random: Random = Random): IntArray {
         val grid = IntArray(81)
@@ -68,44 +64,24 @@ object SudokuGenerator {
         return grid
     }
 
-    /**
-     * Genera un puzzle paralelizando los intentos para reducir el tiempo de espera,
-     * envuelto en un runBlocking para mantener la firma sincrónica hacia el exterior.
-     */
-    fun generate(difficulty: Difficulty, baseRandom: Random = Random): GeneratedPuzzle = runBlocking(Dispatchers.Default) {
-        coroutineScope {
-            val channel = Channel<GeneratedPuzzle>()
+    fun generate(difficulty: Difficulty, baseRandom: Random = Random): GeneratedPuzzle =
+        runBlocking { generateAsync(difficulty, baseRandom) }
 
-            // Lanzamos múltiples intentos en paralelo
-            repeat(MAX_GRID_ATTEMPTS) { attemptId ->
-                launch {
-                    val localRandom = Random(baseRandom.nextInt() + attemptId)
-                    val solution = generateCompleteGrid(localRandom)
-                    val puzzle = digForExactDifficulty(solution, difficulty, localRandom)
-                    if (puzzle != null) {
-                        channel.send(puzzle)
-                    }
+    suspend fun generateAsync(difficulty: Difficulty, random: Random = Random): GeneratedPuzzle =
+        kotlinx.coroutines.withContext(Dispatchers.Default) {
+            repeat(128) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                val solution = generateCompleteGrid(random)
+                val candidate = digForExactDifficulty(solution, difficulty, random)
+                if (candidate != null && SudokuSolver.evaluateDifficulty(candidate.puzzle) == difficulty) {
+                    return@withContext candidate
                 }
+                kotlinx.coroutines.yield()
             }
-
-            // Lanzamos el fallback como red de seguridad simultánea
-            launch {
-                val localRandom = Random(baseRandom.nextInt() + MAX_GRID_ATTEMPTS)
-                val solution = generateCompleteGrid(localRandom)
-                channel.send(digForClueCount(solution, difficulty, localRandom))
-            }
-
-            // Recibimos el primero que termine con éxito (el más rápido)
-            val bestMatch = channel.receive()
-            
-            // Cancelamos el resto de las corrutinas en ejecución para liberar CPU
-            coroutineContext.cancelChildren() 
-            
-            bestMatch
+            error("No se pudo generar este nivel. Volvé a intentarlo.")
         }
-    }
 
-    private fun digForExactDifficulty(
+    private suspend fun digForExactDifficulty(
         solution: IntArray,
         difficulty: Difficulty,
         random: Random
@@ -115,6 +91,7 @@ object SudokuGenerator {
         var bestMatch: IntArray? = null
 
         for (idx in (0 until 81).shuffled(random)) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
             if (clues <= difficulty.minClues) break
             val backup = puzzle[idx]
             puzzle[idx] = 0
@@ -131,28 +108,6 @@ object SudokuGenerator {
             }
         }
         return bestMatch?.let { GeneratedPuzzle(it, solution, difficulty) }
-    }
-
-    private fun digForClueCount(
-        solution: IntArray,
-        difficulty: Difficulty,
-        random: Random
-    ): GeneratedPuzzle {
-        val puzzle = solution.clone()
-        var clues = 81
-
-        for (idx in (0 until 81).shuffled(random)) {
-            if (clues <= difficulty.targetClues) break
-            val backup = puzzle[idx]
-            puzzle[idx] = 0
-
-            if (SudokuSolver.hasUniqueSolution(puzzle)) {
-                clues--
-            } else {
-                puzzle[idx] = backup
-            }
-        }
-        return GeneratedPuzzle(puzzle, solution, difficulty)
     }
 
     fun getSeedPuzzle(difficulty: Difficulty, random: Random = Random): GeneratedPuzzle {

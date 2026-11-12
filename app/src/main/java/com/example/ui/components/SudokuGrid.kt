@@ -25,6 +25,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -220,6 +221,14 @@ private fun SudokuCellView(
 
     Box(
         modifier = cellModifier
+            .semantics(mergeDescendants = true) {
+                contentDescription = "Fila ${cell.row + 1}, columna ${cell.col + 1}, " +
+                    (if (cell.value == 0) "vacía" else "valor ${cell.value}") +
+                    (if (cell.isGiven) ", fija" else "") +
+                    (if (cell.notes.isNotEmpty()) ", notas ${cell.notes.sorted().joinToString()}" else "")
+                selected = isSelected
+                stateDescription = if (cell.isError) "Error" else ""
+            }
             .clickable(
                 interactionSource = interactionSource,
                 indication = ripple(bounded = true, color = colors.controlActiveColor.copy(alpha = 0.2f)),
@@ -233,6 +242,10 @@ private fun SudokuCellView(
                     .matchParentSize()
                     .background(colors.completionGlow.copy(alpha = glowAlpha.value * 0.45f))
             )
+        }
+        if (cell.isError) {
+            Text("!", color = colors.errorText, fontSize = 9.sp,
+                modifier = Modifier.align(Alignment.TopEnd).padding(end = 2.dp))
         }
         if (cell.value != 0) {
             // Igual que en el fondo de la celda: solo cell.isError, que ya respeta el ajuste de

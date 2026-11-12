@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -45,6 +46,8 @@ fun GameControlsBar(
     onEraseClick: () -> Unit,
     onNotesToggleClick: () -> Unit,
     onHintClick: () -> Unit,
+    canRedo: Boolean = false,
+    onRedoClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -62,6 +65,12 @@ fun GameControlsBar(
             badgeText = null,
             testTag = "undo_button",
             onClick = onUndoClick
+        )
+
+        ControlItem(
+            icon = Icons.AutoMirrored.Outlined.Redo, label = "Rehacer",
+            isEnabled = canRedo, isActive = false, badgeText = null,
+            testTag = "redo_button", onClick = onRedoClick
         )
 
         ControlItem(
@@ -110,7 +119,7 @@ private fun NotesToggleItem(
                 indication = ripple(bounded = true, radius = 32.dp),
                 onClick = onClick
             )
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(horizontal = 2.dp, vertical = 4.dp)
             .testTag(testTag)
     ) {
         BadgedBox(
@@ -181,7 +190,7 @@ private fun ControlItem(
                 indication = ripple(bounded = true, radius = 32.dp),
                 onClick = onClick
             )
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(horizontal = 2.dp, vertical = 4.dp)
             .testTag(testTag)
     ) {
         BadgedBox(
