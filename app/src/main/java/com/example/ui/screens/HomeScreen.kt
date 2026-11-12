@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -66,6 +68,7 @@ fun HomeScreen(
     onStartNewGame: (Difficulty) -> Unit,
     onNavigateStats: () -> Unit,
     onNavigateSettings: () -> Unit,
+    onDailyGame: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showDifficultyPicker by remember { mutableStateOf(false) }
@@ -78,7 +81,7 @@ fun HomeScreen(
             .testTag("home_screen"),
         contentAlignment = Alignment.Center
     ) {
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             // Escala responsiva según el ancho disponible en esta pantalla, con
             // 320dp (el contenido de un teléfono típico de 360dp, ya sin el
             // padding horizontal) como referencia = escala 1x. Así el título y
@@ -130,6 +133,10 @@ fun HomeScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
+                    OutlinedButton(onClick = onDailyGame, modifier = Modifier.fillMaxWidth()) {
+                        Text("Desafío diario · Medio")
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
                     // Resume Active Game (if exists)
                     if (uiState.hasActiveSavedGame) {
                         Button(
@@ -184,12 +191,12 @@ fun HomeScreen(
 
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    // Stats and Settings Buttons with capped font scale to prevent text wrapping on large system fonts
+                    // Respetar el tamaño de fuente elegido por el usuario.
                     val currentDensity = LocalDensity.current
                     val cappedDensity = remember(currentDensity) {
                         Density(
                             density = currentDensity.density,
-                            fontScale = currentDensity.fontScale.coerceIn(0.85f, 1.12f)
+                            fontScale = currentDensity.fontScale
                         )
                     }
 

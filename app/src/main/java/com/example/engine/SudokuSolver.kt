@@ -42,6 +42,7 @@ object SudokuSolver {
     }
 
     private fun backtrackCount(grid: IntArray, limit: Int): Int {
+        if (grid.size != 81 || grid.any { it !in 0..9 }) return 0
         val rowMask = IntArray(9)
         val colMask = IntArray(9)
         val boxMask = IntArray(9)
@@ -52,6 +53,7 @@ object SudokuSolver {
                 val r = i / 9
                 val c = i % 9
                 val bit = 1 shl v
+                if ((rowMask[r] or colMask[c] or boxMask[boxOf(r, c)]) and bit != 0) return 0
                 rowMask[r] = rowMask[r] or bit
                 colMask[c] = colMask[c] or bit
                 boxMask[boxOf(r, c)] = boxMask[boxOf(r, c)] or bit
@@ -126,7 +128,6 @@ object SudokuSolver {
     }
 
     fun hasUniqueSolution(grid: IntArray): Boolean {
-        if (analyze(grid).solvedByLogic) return true
         return countSolutions(grid, limit = 2) == 1
     }
 

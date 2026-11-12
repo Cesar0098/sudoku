@@ -36,7 +36,10 @@ class SudokuRepository(private val dao: SudokuDao) {
         errorsCount: Int,
         hintsUsed: Int,
         isPaused: Boolean,
-        isCompleted: Boolean
+        isCompleted: Boolean,
+        sessionId: String = "legacy",
+        undoData: String = "",
+        redoData: String = ""
     ) {
         val puzzleChars = CharArray(81)
         val solutionChars = CharArray(81)
@@ -67,7 +70,10 @@ class SudokuRepository(private val dao: SudokuDao) {
             errorsCount = errorsCount,
             hintsUsed = hintsUsed,
             isPaused = isPaused,
-            isCompleted = isCompleted
+            isCompleted = isCompleted,
+            sessionId = sessionId,
+            undoData = undoData,
+            redoData = redoData
         )
 
         dao.saveActiveGame(entity)
@@ -122,51 +128,12 @@ class SudokuRepository(private val dao: SudokuDao) {
     }
 
     suspend fun recordGameCompleted(
+        sessionId: String,
         difficulty: Difficulty,
         elapsedSeconds: Long,
         errors: Int,
         hints: Int
     ) {
-        val existing = dao.getStatsDirect(difficulty.id) ?: GameStatsEntity(difficulty = difficulty.id)
-        val newGamesWon = existing.gamesWon + 1
-        val newBestTime = if (existing.bestTimeSeconds == 0L || elapsedSeconds < existing.bestTimeSeconds) {
-            elapsedSeconds
-        } else {
-            existing.bestTimeSeconds
-        }
-        val newTotalTime = existing.totalTimeSeconds + elapsedSeconds
-        val newErrors = existing.totalErrors + errors
-        val newHints = existing.totalHintsUsed + hints
-
-        // Partida "perfecta" = ganada sin errores ni pistas. La racha actual
-        // se corta (vuelve a 0) apenas se gana una partida que no es perfecta;
-        // el récord se actualiza si la racha actual lo supera. perfectWins es
-        // el conteo total acumulado (no se corta nunca, a diferencia de la racha).
-        val isPerfect = errors == 0 && hints == 0
-        val newCurrentStreak = if (isPerfect) existing.currentPerfectStreak + 1 else 0
-        val newBestStreak = maxOf(existing.bestPerfectStreak, newCurrentStreak)
-        val newPerfectWins = if (isPerfect) existing.perfectWins + 1 else existing.perfectWins
-
-        val updated = existing.copy(
-            gamesWon = newGamesWon,
-            bestTimeSeconds = newBestTime,
-            totalTimeSeconds = newTotalTime,
-            totalErrors = newErrors,
-            totalHintsUsed = newHints,
-            currentPerfectStreak = newCurrentStreak,
-            bestPerfectStreak = newBestStreak,
-            perfectWins = newPerfectWins
-        )
-        dao.insertOrUpdateStats(updated)
-
-        dao.insertGameHistory(
-            GameHistoryEntity(
-                difficulty = difficulty.id,
-                completedAt = System.currentTimeMillis(),
-                timeSeconds = elapsedSeconds,
-                errors = errors,
-                hints = hints
-            )
-        )
+        dao.finishGame(sessionId, difficulty.id, elapsedSeconds, errors, hints)
     }
 }

@@ -1,5 +1,11 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -67,8 +73,16 @@ fun GameScreen(
     onResumeClick: () -> Unit,
     onRestartClick: () -> Unit,
     onNewGameClick: (Difficulty) -> Unit,
+    onRedoClick: () -> Unit = {},
+    onRevealHint: () -> Unit = {},
+    onDismissHint: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    BackHandler { onBackToHome() }
+    var numberFirst by remember { mutableStateOf(false) }
+    var lockedNumber by remember { mutableStateOf(0) }
+
+
     // Efecto de "escala + fade suave" en todo el tablero al completar la partida,
     // antes de mostrar el diálogo de victoria (en vez de aparecer de golpe apenas
     // se coloca el último número).
@@ -162,7 +176,8 @@ fun GameScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(innerPadding)
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = 12.dp)
+                        .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -172,6 +187,7 @@ fun GameScreen(
                         errorsCount = uiState.errorsCount,
                         maxErrors = uiState.maxErrors,
                         isAutoCheck = userSettings.autoCheckErrors,
+                        errorLimitEnabled = userSettings.errorLimitEnabled,
                         elapsedSeconds = uiState.elapsedSeconds
                     )
 
@@ -181,9 +197,13 @@ fun GameScreen(
                         selectedCell = uiState.selectedCell,
                         highlightDuplicates = userSettings.highlightDuplicates,
                         highlightScope = userSettings.highlightScope,
-                        onCellClick = onCellClick,
+                        onCellClick = { row, col ->
+                            onCellClick(row, col)
+                            if (numberFirst && lockedNumber in 1..9) onNumberClick(lockedNumber)
+                        },
                         completionBurst = uiState.completionBurst,
                         modifier = Modifier
+                            .widthIn(max = 500.dp)
                             .padding(vertical = 4.dp)
                             .graphicsLayer {
                                 scaleX = boardScale.value
@@ -196,6 +216,8 @@ fun GameScreen(
                     GameControlsBar(
                         isNotesMode = uiState.isNotesMode,
                         canUndo = uiState.canUndo,
+                        canRedo = uiState.canRedo,
+                        onRedoClick = onRedoClick,
                         hintsUsed = uiState.hintsUsed,
                         onUndoClick = onUndoClick,
                         onEraseClick = onEraseClick,
@@ -203,6 +225,9 @@ fun GameScreen(
                         onHintClick = onHintClick
                     )
 
+                    TextButton(onClick = { numberFirst = !numberFirst; lockedNumber = 0 }) {
+                        Text(if (numberFirst) "Entrada: número primero" else "Entrada: celda primero")
+                    }
                     // Numeric Keypad 1..9
                     val selectedNumber = uiState.selectedCell?.let {
                         uiState.board.getCell(it.first, it.second).value
@@ -210,16 +235,31 @@ fun GameScreen(
 
                     NumberKeypad(
                         board = uiState.board,
-                        selectedNumber = selectedNumber,
-                        onNumberClick = onNumberClick,
+                        selectedNumber = if (numberFirst) lockedNumber else selectedNumber,
+                        assisted = userSettings.autoCheckErrors || userSettings.errorLimitEnabled,
+                        onNumberClick = { if (numberFirst) lockedNumber = it else onNumberClick(it) },
                         modifier = Modifier.padding(bottom = 12.dp)
                     )
                 }
             }
         }
 
+        if (uiState.generationError != null) {
+            AlertDialog(onDismissRequest = onBackToHome,
+                title = { Text("No se pudo crear la partida") },
+                text = { Text(uiState.generationError) },
+                confirmButton = { TextButton(onClick = { onNewGameClick(uiState.requestedDifficulty) }) { Text("Reintentar") } },
+                dismissButton = { TextButton(onClick = onBackToHome) { Text("Inicio") } })
+        }
+        if (uiState.hintExplanation != null && !uiState.isPaused) {
+            AlertDialog(onDismissRequest = onDismissHint,
+                title = { Text("Pista") }, text = { Text(uiState.hintExplanation) },
+                confirmButton = { TextButton(onClick = onRevealHint) { Text("Revelar número") } },
+                dismissButton = { TextButton(onClick = onDismissHint) { Text("Seguir jugando") } })
+        }
+
         // Pause Overlay
-        if (uiState.isPaused) {
+        if (uiState.isPaused && uiState.generationError == null) {
             PauseOverlay(
                 elapsedSeconds = uiState.elapsedSeconds,
                 difficulty = uiState.difficulty,

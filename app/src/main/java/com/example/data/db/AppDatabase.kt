@@ -14,8 +14,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         UserSettingsEntity::class,
         GameHistoryEntity::class
     ],
-    version = 3,
-    exportSchema = false
+    version = 4,
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
 
@@ -65,6 +65,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE active_game ADD COLUMN sessionId TEXT NOT NULL DEFAULT 'legacy'")
+                db.execSQL("ALTER TABLE active_game ADD COLUMN undoData TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE active_game ADD COLUMN redoData TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -72,12 +80,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "sudoku_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
-                    // Red de seguridad: si en el futuro cambia el esquema otra
-                    // vez sin una Migration explícita, Room recrea la base en
-                    // vez de crashear al abrir la app (se pierden los datos
-                    // locales en ese caso puntual, pero no hay crash).
-                    .fallbackToDestructiveMigration(dropAllTables = true)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                 INSTANCE = instance
                 instance

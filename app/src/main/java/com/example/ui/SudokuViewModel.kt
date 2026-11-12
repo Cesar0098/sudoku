@@ -9,6 +9,7 @@ import com.example.data.db.GameStatsEntity
 import com.example.data.db.UserSettingsEntity
 import com.example.data.repository.SudokuRepository
 import com.example.engine.SudokuGenerator
+import com.example.model.MoveHistoryCodec
 import com.example.model.CellDelta
 import com.example.model.CompletionBurst
 import com.example.model.Difficulty
@@ -44,6 +45,10 @@ data class GameUiState(
     val isCompleted: Boolean = false,
     val isGameOver: Boolean = false,
     val canUndo: Boolean = false,
+    val canRedo: Boolean = false,
+    val generationError: String? = null,
+    val requestedDifficulty: Difficulty = Difficulty.MEDIUM,
+    val hintExplanation: String? = null,
     val hasActiveSavedGame: Boolean = false,
     val isGenerating: Boolean = false,
     // Última ráfaga de fila/columna/bloque recién completados, para disparar el
@@ -88,6 +93,14 @@ class SudokuViewModel(
             )
 
     private val undoStack = ArrayDeque<SudokuMove>()
+    private val redoStack = ArrayDeque<SudokuMove>()
+    private var sessionId = "legacy"
+    private var generationJob: Job? = null
+    private var persistenceJob: Job? = null
+    private fun persist(block: suspend () -> Unit) {
+        val previous = persistenceJob
+        persistenceJob = viewModelScope.launch { previous?.join(); block() }
+    }
     private var timerJob: Job? = null
 
     // true recién cuando el ViewModel realmente cargó una partida (nueva o
@@ -140,26 +153,45 @@ class SudokuViewModel(
     }
 
     fun pauseGame() {
+        if (_uiState.value.isGenerating) {
+            generationJob?.cancel()
+            return
+        }
         if (!hasActiveGameLoaded) return
         if (_uiState.value.isCompleted || _uiState.value.isGameOver) return
         timerJob?.cancel()
-        _uiState.update { it.copy(isPaused = true) }
+        _uiState.update { it.copy(isPaused = true, hintExplanation = null) }
         saveCurrentGame()
     }
 
     fun resumeGame() {
-        _uiState.update { it.copy(isPaused = false) }
+        if (!hasActiveGameLoaded || _uiState.value.isCompleted || _uiState.value.isGameOver) return
+        _uiState.update { it.copy(isPaused = false, generationError = null) }
         startTimer()
     }
 
-    fun startNewGame(difficulty: Difficulty) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isGenerating = true, isPaused = false, isCompleted = false, isGameOver = false) }
-            undoStack.clear()
-
-            val puzzle = withContext(Dispatchers.Default) {
-                SudokuGenerator.generate(difficulty)
+    fun startNewGame(difficulty: Difficulty, seed: Int? = null) {
+        if (_uiState.value.isGenerating) return
+        timerJob?.cancel()
+        generationJob = viewModelScope.launch {
+            persistenceJob?.join()
+            val previousState = _uiState.value
+            _uiState.update { it.copy(isGenerating = true, generationError = null, requestedDifficulty = difficulty, difficulty = difficulty, isPaused = false, isCompleted = false, isGameOver = false) }
+            val puzzle = try {
+                SudokuGenerator.generateAsync(difficulty, seed?.let { kotlin.random.Random(it) } ?: kotlin.random.Random)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                _uiState.value = previousState.copy(isPaused = true, isGenerating = false,
+                    requestedDifficulty = difficulty,
+                    generationError = if (hasActiveGameLoaded) null else "La generación se interrumpió. Podés volver a intentarlo.")
+                throw cancelled
+            } catch (failure: Exception) {
+                _uiState.value = previousState.copy(isGenerating = false, isPaused = true, requestedDifficulty = difficulty,
+                    generationError = "No se pudo preparar el tablero. Volvé a intentarlo.")
+                return@launch
             }
+            undoStack.clear()
+            redoStack.clear()
+            sessionId = java.util.UUID.randomUUID().toString()
 
             val board = SudokuBoard.fromGrid(puzzle.puzzle, puzzle.solution)
             repository.recordGameStarted(difficulty)
@@ -177,9 +209,9 @@ class SudokuViewModel(
                     isPaused = false,
                     isCompleted = false,
                     isGameOver = false,
-                    canUndo = false,
+                    canUndo = undoStack.isNotEmpty(), canRedo = redoStack.isNotEmpty(),
                     isGenerating = false,
-                    completionBurst = null
+                    completionBurst = null, hintExplanation = null, generationError = null
                 )
             }
 
@@ -188,14 +220,25 @@ class SudokuViewModel(
         }
     }
 
+    fun startDailyGame() {
+        val today = java.util.Calendar.getInstance()
+        val seed = today.get(java.util.Calendar.YEAR) * 1000 + today.get(java.util.Calendar.DAY_OF_YEAR)
+        startNewGame(Difficulty.MEDIUM, seed)
+    }
+
     fun resumeSavedGame() {
+        if (hasActiveGameLoaded && !_uiState.value.isCompleted && !_uiState.value.isGameOver) {
+            resumeGame()
+            return
+        }
         viewModelScope.launch {
+            persistenceJob?.join()
             val entity = repository.getActiveGame() ?: return@launch
 
             // Defensa adicional: si la partida guardada ya había alcanzado el
             // límite de errores (p.ej. quedó así por el bug anterior, o el
             // límite se activó después de guardarla), no se puede "revivir".
-            val settings = userSettings.value
+            val settings = repository.getUserSettings()
             if (settings.errorLimitEnabled && entity.errorsCount >= _uiState.value.maxErrors) {
                 repository.clearActiveGame()
                 return@launch
@@ -204,6 +247,10 @@ class SudokuViewModel(
             val showErrors = shouldShowErrors(settings)
             val (board, diff) = repository.restoreBoard(entity, showErrors)
             undoStack.clear()
+            undoStack.addAll(MoveHistoryCodec.decode(entity.undoData))
+            redoStack.clear()
+            redoStack.addAll(MoveHistoryCodec.decode(entity.redoData))
+            sessionId = entity.sessionId
             hasActiveGameLoaded = true
 
             _uiState.update {
@@ -218,9 +265,9 @@ class SudokuViewModel(
                     isPaused = false,
                     isCompleted = entity.isCompleted,
                     isGameOver = false,
-                    canUndo = false,
+                    canUndo = undoStack.isNotEmpty(), canRedo = redoStack.isNotEmpty(),
                     isGenerating = false,
-                    completionBurst = null
+                    completionBurst = null, hintExplanation = null, generationError = null
                 )
             }
 
@@ -229,12 +276,18 @@ class SudokuViewModel(
     }
 
     fun restartCurrentGame() {
+        if (!hasActiveGameLoaded || _uiState.value.isGenerating) return
         val current = _uiState.value
+        if (current.isCompleted || current.isGameOver) {
+            sessionId = java.util.UUID.randomUUID().toString()
+            persist { repository.recordGameStarted(current.difficulty) }
+        }
         val resetCells = current.board.cells.map { cell ->
             if (cell.isGiven) cell
             else cell.copy(value = 0, notes = emptySet(), isError = false)
         }
         undoStack.clear()
+        redoStack.clear()
         _uiState.update {
             it.copy(
                 board = SudokuBoard(resetCells),
@@ -246,8 +299,8 @@ class SudokuViewModel(
                 isPaused = false,
                 isCompleted = false,
                 isGameOver = false,
-                canUndo = false,
-                completionBurst = null
+                canUndo = undoStack.isNotEmpty(), canRedo = redoStack.isNotEmpty(),
+                completionBurst = null, hintExplanation = null, generationError = null
             )
         }
         saveCurrentGame()
@@ -255,6 +308,7 @@ class SudokuViewModel(
     }
 
     fun selectCell(row: Int, col: Int) {
+        if (row !in 0..8 || col !in 0..8 || _uiState.value.isGenerating) return
         if (_uiState.value.isPaused || _uiState.value.isCompleted || _uiState.value.isGameOver) return
         _uiState.update { it.copy(selectedCell = Pair(row, col)) }
     }
@@ -264,8 +318,9 @@ class SudokuViewModel(
     }
 
     fun inputNumber(number: Int) {
+        if (number !in 1..9) return
         val state = _uiState.value
-        if (state.isPaused || state.isCompleted || state.isGameOver) return
+        if (state.isGenerating || state.isPaused || state.isCompleted || state.isGameOver) return
         val sel = state.selectedCell ?: return
         val currentCell = state.board.getCell(sel.first, sel.second)
 
@@ -275,6 +330,7 @@ class SudokuViewModel(
         val settings = userSettings.value
 
         if (state.isNotesMode) {
+            if (currentCell.value != 0) return
             // Toggle note
             val newNotes = if (currentCell.notes.contains(number)) {
                 currentCell.notes - number
@@ -291,6 +347,7 @@ class SudokuViewModel(
                 oldIsError = currentCell.isError,
                 newIsError = currentCell.isError
             )
+            redoStack.clear()
             undoStack.addLast(SudokuMove(listOf(delta)))
 
             val updatedCells = state.board.cells.map { cell ->
@@ -299,12 +356,13 @@ class SudokuViewModel(
                 } else cell
             }
             _uiState.update {
-                it.copy(board = SudokuBoard(updatedCells), canUndo = undoStack.isNotEmpty())
+                it.copy(board = SudokuBoard(updatedCells), canRedo = redoStack.isNotEmpty(), canUndo = undoStack.isNotEmpty())
             }
             saveCurrentGame()
             return
         }
 
+        // Sin comprobación, ningún comportamiento de edición revela la solución.
         // Normal number placement mode
         if (currentCell.value == number) {
             // Ya estaba puesto este número. Si es correcto, un segundo toque no debe
@@ -313,7 +371,7 @@ class SudokuViewModel(
             // querer el mismo botón del teclado). Solo si el número puesto es
             // incorrecto seguimos permitiendo que un segundo toque lo borre, para
             // poder corregir un error rápido sin pasar por el botón de borrar.
-            if (number == currentCell.solutionValue) return
+            if (!shouldShowErrors(settings) || number == currentCell.solutionValue) return
             erase()
             return
         }
@@ -322,7 +380,7 @@ class SudokuViewModel(
         // otro número no debe pisarlo ni contarse como error (igual que ya
         // pasa con las celdas dadas). Si de verdad se quiere cambiar, primero
         // hay que borrarla con el botón de borrar.
-        if (currentCell.value != 0 && currentCell.value == currentCell.solutionValue) return
+        if (shouldShowErrors(settings) && currentCell.value != 0 && currentCell.value == currentCell.solutionValue) return
 
         val isCorrect = (number == currentCell.solutionValue)
         val isError = !isCorrect
@@ -342,7 +400,7 @@ class SudokuViewModel(
         )
         deltas.add(mainDelta)
 
-        val relatedCoords = if (settings.autoRemoveNotes && isCorrect) {
+        val relatedCoords = if (settings.autoRemoveNotes && (isCorrect || !shouldShowErrors(settings))) {
             state.board.getRelatedCoords(sel.first, sel.second)
         } else {
             emptySet()
@@ -374,6 +432,7 @@ class SudokuViewModel(
         }
 
         val newBoard = SudokuBoard(updatedCells)
+        redoStack.clear()
         undoStack.addLast(SudokuMove(deltas))
 
         val isSolved = newBoard.isSolvedCorrectly
@@ -381,7 +440,7 @@ class SudokuViewModel(
         // Solo puede haberse completado una fila/columna/bloque recién ahora si el
         // número puesto era correcto (un número mal puesto nunca termina de llenar
         // nada de forma válida).
-        val newBurst = if (isCorrect) {
+        val newBurst = if (isCorrect && shouldShowErrors(settings)) {
             buildCompletionBurst(newBoard, sel.first, sel.second)
         } else {
             null
@@ -394,21 +453,22 @@ class SudokuViewModel(
                 errorsCount = newErrorsCount,
                 isGameOver = reachedGameOver,
                 isCompleted = isSolved,
-                canUndo = undoStack.isNotEmpty()
+                canRedo = redoStack.isNotEmpty(), canUndo = undoStack.isNotEmpty()
             )
         }
 
         when {
             isSolved -> {
                 timerJob?.cancel()
-                viewModelScope.launch {
+                val completedSession = sessionId
+                persist {
                     repository.recordGameCompleted(
+                        sessionId = completedSession,
                         difficulty = state.difficulty,
                         elapsedSeconds = state.elapsedSeconds,
                         errors = newErrorsCount,
                         hints = state.hintsUsed
                     )
-                    repository.clearActiveGame()
                 }
             }
             reachedGameOver -> {
@@ -416,7 +476,7 @@ class SudokuViewModel(
                 // que volvía a aparecer "Continuar partida" y se podía retomar
                 // un tablero ya perdido. Ahora se descarta, igual que al ganar.
                 timerJob?.cancel()
-                viewModelScope.launch {
+                persist {
                     repository.clearActiveGame()
                 }
             }
@@ -426,7 +486,7 @@ class SudokuViewModel(
 
     fun erase() {
         val state = _uiState.value
-        if (state.isPaused || state.isCompleted || state.isGameOver) return
+        if (state.isGenerating || state.isPaused || state.isCompleted || state.isGameOver) return
         val sel = state.selectedCell ?: return
         val currentCell = state.board.getCell(sel.first, sel.second)
 
@@ -443,6 +503,7 @@ class SudokuViewModel(
             oldIsError = currentCell.isError,
             newIsError = false
         )
+        redoStack.clear()
         undoStack.addLast(SudokuMove(listOf(delta)))
 
         val updatedCells = state.board.cells.map { cell ->
@@ -454,15 +515,17 @@ class SudokuViewModel(
         _uiState.update {
             it.copy(
                 board = SudokuBoard(updatedCells),
-                canUndo = undoStack.isNotEmpty()
+                canRedo = redoStack.isNotEmpty(), canUndo = undoStack.isNotEmpty()
             )
         }
         saveCurrentGame()
     }
 
     fun undo() {
-        if (undoStack.isEmpty()) return
+        val current = _uiState.value
+        if (current.isGenerating || current.isPaused || current.isCompleted || current.isGameOver || undoStack.isEmpty()) return
         val move = undoStack.removeLast()
+        redoStack.addLast(move)
         val state = _uiState.value
 
         val deltaMap = move.deltas.associateBy { it.row to it.col }
@@ -473,7 +536,7 @@ class SudokuViewModel(
                 cell.copy(
                     value = delta.oldValue,
                     notes = delta.oldNotes,
-                    isError = delta.oldIsError
+                    isError = shouldShowErrors(userSettings.value) && delta.oldValue != 0 && delta.oldValue != cell.solutionValue
                 )
             } else cell
         }
@@ -481,15 +544,51 @@ class SudokuViewModel(
         _uiState.update {
             it.copy(
                 board = SudokuBoard(updatedCells),
-                canUndo = undoStack.isNotEmpty()
+                canRedo = redoStack.isNotEmpty(), canUndo = undoStack.isNotEmpty()
             )
         }
         saveCurrentGame()
     }
 
+    fun redo() {
+        val state = _uiState.value
+        if (state.isGenerating || state.isPaused || state.isCompleted || state.isGameOver || redoStack.isEmpty()) return
+        val move = redoStack.removeLast()
+        val deltas = move.deltas.associateBy { it.row to it.col }
+        val cells = state.board.cells.map { cell ->
+            deltas[cell.row to cell.col]?.let { d -> cell.copy(value = d.newValue, notes = d.newNotes,
+                isError = shouldShowErrors(userSettings.value) && d.newValue != 0 && d.newValue != cell.solutionValue) } ?: cell
+        }
+        undoStack.addLast(move)
+        _uiState.update { it.copy(board = SudokuBoard(cells), canUndo = true, canRedo = redoStack.isNotEmpty()) }
+        saveCurrentGame()
+    }
+
+    fun explainHint() {
+        val state = _uiState.value
+        if (state.isPaused || state.isCompleted || state.isGameOver || state.isGenerating) return
+        val wrong = state.board.cells.firstOrNull { !it.isGiven && it.value != 0 && it.value != it.solutionValue }
+        val empty = state.board.cells.filter { it.value == 0 }
+        val single = if (wrong == null) empty.firstOrNull { cell ->
+            val used = state.board.getRelatedCoords(cell.row, cell.col).map { state.board.getCell(it.first, it.second).value }.toSet()
+            (1..9).count { it !in used } == 1
+        } else null
+        val target = wrong ?: single ?: findHintCell(state.board) ?: return
+        val explanation = when {
+            wrong != null -> "Revisá la fila ${target.row + 1}, columna ${target.col + 1}: ese valor no coincide con la solución."
+            single != null -> "En la fila ${target.row + 1}, columna ${target.col + 1}, los números de su fila, columna y bloque dejan un único candidato."
+            else -> "No encontré un candidato único inmediato. Podés seguir con tus notas o revelar esta celda."
+        }
+        _uiState.update { it.copy(selectedCell = target.row to target.col, hintExplanation = explanation,
+            hintsUsed = it.hintsUsed + 1) }
+        saveCurrentGame()
+    }
+
+    fun dismissHint() { _uiState.update { it.copy(hintExplanation = null) } }
+
     fun useHint() {
         val state = _uiState.value
-        if (state.isPaused || state.isCompleted || state.isGameOver) return
+        if (state.isGenerating || state.isPaused || state.isCompleted || state.isGameOver) return
 
         // Prefer currently selected cell if empty or incorrect and not given
         val sel = state.selectedCell
@@ -519,7 +618,13 @@ class SudokuViewModel(
 
         val newBoard = SudokuBoard(updatedCells)
         val isSolved = newBoard.isSolvedCorrectly
-        val newHintsUsed = state.hintsUsed + 1
+        redoStack.clear()
+        val deltas = updatedCells.zip(state.board.cells).mapNotNull { (new, old) ->
+            if (new == old) null else CellDelta(old.row, old.col, old.value, new.value,
+                old.notes, new.notes, old.isError, new.isError)
+        }
+        undoStack.addLast(SudokuMove(deltas))
+        val newHintsUsed = state.hintsUsed + if (state.hintExplanation == null) 1 else 0
         // Una pista siempre coloca el número correcto, así que también puede
         // completar la fila/columna/bloque de esa celda.
         val newBurst = buildCompletionBurst(newBoard, targetCell.row, targetCell.col)
@@ -529,6 +634,7 @@ class SudokuViewModel(
                 board = newBoard,
                 selectedCell = Pair(targetCell.row, targetCell.col),
                 hintsUsed = newHintsUsed,
+                hintExplanation = null, canUndo = true, canRedo = false,
                 isCompleted = isSolved,
                 completionBurst = newBurst ?: it.completionBurst
             )
@@ -536,14 +642,15 @@ class SudokuViewModel(
 
         if (isSolved) {
             timerJob?.cancel()
-            viewModelScope.launch {
+            val completedSession = sessionId
+            persist {
                 repository.recordGameCompleted(
+                    sessionId = completedSession,
                     difficulty = state.difficulty,
                     elapsedSeconds = state.elapsedSeconds,
                     errors = state.errorsCount,
                     hints = newHintsUsed
                 )
-                repository.clearActiveGame()
             }
         } else {
             saveCurrentGame()
@@ -571,7 +678,10 @@ class SudokuViewModel(
     private fun saveCurrentGame() {
         val state = _uiState.value
         if (!hasActiveGameLoaded || state.isCompleted || state.isGameOver || state.board.cells.isEmpty() || state.isGenerating) return
-        viewModelScope.launch {
+        val savedSession = sessionId
+        val undoData = MoveHistoryCodec.encode(undoStack.toList())
+        val redoData = MoveHistoryCodec.encode(redoStack.toList())
+        persist {
             repository.saveActiveGame(
                 board = state.board,
                 difficulty = state.difficulty,
@@ -579,7 +689,8 @@ class SudokuViewModel(
                 errorsCount = state.errorsCount,
                 hintsUsed = state.hintsUsed,
                 isPaused = state.isPaused,
-                isCompleted = state.isCompleted
+                isCompleted = state.isCompleted,
+                sessionId = savedSession, undoData = undoData, redoData = redoData
             )
         }
     }
@@ -587,6 +698,14 @@ class SudokuViewModel(
     fun updateSettings(settings: UserSettingsEntity) {
         viewModelScope.launch {
             repository.saveUserSettings(settings)
+            _uiState.update { state -> state.copy(board = SudokuBoard(state.board.cells.map { cell ->
+                cell.copy(isError = shouldShowErrors(settings) && !cell.isGiven && cell.value != 0 && cell.value != cell.solutionValue)
+            })) }
+            if (settings.errorLimitEnabled && _uiState.value.errorsCount >= _uiState.value.maxErrors) {
+                timerJob?.cancel()
+                _uiState.update { it.copy(isGameOver = true) }
+                persist { repository.clearActiveGame() }
+            }
         }
     }
 

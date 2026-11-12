@@ -1,5 +1,6 @@
 package com.example.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -15,10 +16,10 @@ data class GameStatsEntity(
     // Racha de partidas ganadas consecutivas sin errores ni pistas ("perfectas").
     // Se corta apenas se gana una partida no perfecta; no se ve afectada por
     // partidas abandonadas (solo se actualiza en recordGameCompleted).
-    val currentPerfectStreak: Int = 0,
-    val bestPerfectStreak: Int = 0,
+    @ColumnInfo(defaultValue = "0") val currentPerfectStreak: Int = 0,
+    @ColumnInfo(defaultValue = "0") val bestPerfectStreak: Int = 0,
     // Conteo total (no racha) de partidas ganadas sin errores ni pistas.
-    val perfectWins: Int = 0
+    @ColumnInfo(defaultValue = "0") val perfectWins: Int = 0
 ) {
     val winRatePercent: Int
         get() = if (gamesPlayed > 0) ((gamesWon.toDouble() / gamesPlayed) * 100).toInt() else 0

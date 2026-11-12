@@ -88,6 +88,10 @@ fun SudokuApp(viewModel: SudokuViewModel) {
                     viewModel.startNewGame(difficulty)
                     navController.navigate("game")
                 },
+                onDailyGame = {
+                    viewModel.startDailyGame()
+                    navController.navigate("game")
+                },
                 onNavigateStats = {
                     navController.navigate("stats")
                 },
@@ -125,8 +129,11 @@ fun SudokuApp(viewModel: SudokuViewModel) {
                     viewModel.toggleNotesMode()
                 },
                 onHintClick = {
-                    viewModel.useHint()
+                    viewModel.explainHint()
                 },
+                onRedoClick = { viewModel.redo() },
+                onRevealHint = { viewModel.useHint() },
+                onDismissHint = { viewModel.dismissHint() },
                 onPauseClick = {
                     viewModel.pauseGame()
                 },

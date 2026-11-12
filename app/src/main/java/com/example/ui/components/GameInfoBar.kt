@@ -24,6 +24,7 @@ fun GameInfoBar(
     errorsCount: Int,
     maxErrors: Int,
     isAutoCheck: Boolean,
+    errorLimitEnabled: Boolean = false,
     elapsedSeconds: Long,
     modifier: Modifier = Modifier
 ) {
@@ -70,10 +71,10 @@ fun GameInfoBar(
                 color = colors.headerLabelColor
             )
             Text(
-                text = if (isAutoCheck) {
-                    "$errorsCount"
-                } else {
-                    "$errorsCount/$maxErrors"
+                text = when {
+                    errorLimitEnabled -> "$errorsCount/$maxErrors"
+                    isAutoCheck -> "$errorsCount"
+                    else -> "—"
                 },
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
